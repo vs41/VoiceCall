@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Team Chat (WebSocket)</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      background: #f4f4f4;
+      max-width: 600px;
+      margin: auto;
+    }
+
+    #status {
+      color: green;
+      margin-bottom: 10px;
+    }
+
+    #messages {
+      background: white;
+      border: 1px solid #ccc;
+      padding: 10px;
+      height: 300px;
+      overflow-y: auto;
+      margin-bottom: 10px;
+    }
+
+    #inputArea {
+      display: flex;
+      gap: 10px;
+    }
+
+    #msgInput {
+      flex: 1;
+      padding: 10px;
+      font-size: 16px;
+    }
+
+    #sendBtn {
+      padding: 10px 20px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+
+    .message {
+      margin: 5px 0;
+      word-wrap: break-word;
+    }
+
+    .message.you {
+      font-weight: bold;
+      color: blue;
+    }
+
+    .message.other {
+      font-weight: bold;
+      color: black;
+    }
+
+    .error {
+      color: red;
+    }
+  </style>
+</head>
+<body>
+  <h2>💬 Team Chat</h2>
+  <div id="status">Connecting...</div>
+  <div id="messages"></div>
+
+  <div id="inputArea">
+    <input type="text" id="msgInput" placeholder="Type a message..." />
+    <button id="sendBtn">Send</button>
+  </div>
+
+  <script>
+    const myId = crypto.randomUUID(); // Unique ID per user
+    const socket = new WebSocket("ws://192.168.1.20:8022/ws"); // Replace with your server IP
+
+    const statusDiv = document.getElementById("status");
+    const messagesDiv = document.getElementById("messages");
+    const msgInput = document.getElementById("msgInput");
+    const sendBtn = document.getElementById("sendBtn");
+
+    function appendMessage(text, senderId) {
+      const div = document.createElement("div");
+      div.className = "message " + (senderId === myId ? "you" : "other");
+      div.innerText = (senderId === myId ? "You: " : `${senderId.slice(0, 8)}: `) + text;
+      messagesDiv.appendChild(div);
+      messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
+
+    function sendMessage() {
+      const text = msgInput.value.trim();
+      if (text === "") return;
+      const msg = {
+        type: "chat",
+        userId: myId,
+        text: text
+      };
+      socket.send(JSON.stringify(msg));
+      appendMessage(text, myId);
+      msgInput.value = "";
+    }
+
+    socket.onopen = () => {
+      statusDiv.innerText = "✅ Connected to chat!";
+    };
+
+    socket.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === "chat" && msg.text && msg.userId !== myId) {
+          appendMessage(msg.text, msg.userId);
+        }
+      } catch (err) {
+        console.error("Invalid message:", event.data);
+      }
+    };
+
+    socket.onerror = (err) => {
+      statusDiv.innerText = "❌ WebSocket error!";
+      statusDiv.className = "error";
+      console.error("WebSocket error:", err);
+    };
+
+    socket.onclose = () => {
+      statusDiv.innerText = "❌ Disconnected from server.";
+      statusDiv.className = "error";
+    };
+
+    sendBtn.onclick = sendMessage;
+    msgInput.addEventListener("keyup", (e) => {
+      if (e.key === "Enter") sendMessage();
+    });
+  </script>
+</body>
+</html>

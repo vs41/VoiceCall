@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Team Voice Chat (WebRTC + WebSocket)</title>
+  <style>
+    body { font-family: Arial; padding: 20px; }
+    audio { display: block; margin-bottom: 10px; }
+    #status { color: green; }
+  </style>
+</head>
+<body>
+  <h2>🎮 Team Voice Chat</h2>
+  <div id="status">Connecting...</div>
+  <div id="audios"></div>
+
+  <script>
+    const socket = new WebSocket(`ws://192.168.1.20:8001`);
+    const peers = {};
+    let localStream = null;
+    const myId = crypto.randomUUID();
+
+    document.getElementById("status").innerText = "🎤 Your ID: " + myId;
+
+    // Start mic
+    async function startLocalAudio() {
+      localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const localAudio = document.createElement("audio");
+      localAudio.srcObject = localStream;
+      localAudio.autoplay = true;
+      localAudio.muted = true;
+      localAudio.controls = true;
+      document.getElementById("audios").appendChild(localAudio);
+    }
+
+    async function createPeerConnection(peerId) {
+      const pc = new RTCPeerConnection();
+
+      // Add local audio
+      localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+      pc.onicecandidate = event => {
+        if (event.candidate) {
+          sendSignal({
+            type: "ice-candidate",
+            target: peerId,
+            candidate: event.candidate
+          });
+        }
+      };
+
+      pc.ontrack = event => {
+        const remoteAudio = document.createElement("audio");
+        remoteAudio.srcObject = event.streams[0];
+        remoteAudio.autoplay = true;
+        remoteAudio.controls = true;
+        document.getElementById("audios").appendChild(remoteAudio);
+      };
+
+      peers[peerId] = pc;
+      return pc;
+    }
+
+    socket.onopen = async () => {
+      await startLocalAudio();
+      sendSignal({ type: "join", userId: myId });
+    };
+
+    socket.onmessage = async (event) => {
+      const msg = JSON.parse(event.data);
+      const { type, from, target, offer, answer, candidate, userId } = msg;
+
+      if (from === myId) return;
+
+      switch (type) {
+        case "user-joined":
+          if (userId !== myId) {
+            const pc = await createPeerConnection(userId);
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            sendSignal({ type: "offer", target: userId, offer });
+          }
+          break;
+
+        case "offer":
+          const pc1 = await createPeerConnection(from);
+          await pc1.setRemoteDescription(new RTCSessionDescription(offer));
+          const ans = await pc1.createAnswer();
+          await pc1.setLocalDescription(ans);
+          sendSignal({ type: "answer", target: from, answer: ans });
+          break;
+
+        case "answer":
+          await peers[from]?.setRemoteDescription(new RTCSessionDescription(answer));
+          break;
+
+        case "ice-candidate":
+          if (candidate && peers[from]) {
+            await peers[from].addIceCandidate(new RTCIceCandidate(candidate));
+          }
+          break;
+      }
+    };
+
+    function sendSignal(data) {
+      data.from = myId;
+      socket.send(JSON.stringify(data));
+    }
+  </script>
+</body>
+</html>
