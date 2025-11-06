@@ -27,7 +27,7 @@ var (
 	indexTemplate = &template.Template{}
 
 	listLock sync.RWMutex
-
+	//addr     = flag.String("addr", ":8080", "http service address")
 	// Nested maps: gameID -> teamID -> connections/tracks
 	gameConnections = map[string]map[string][]peerConnectionState{}
 	gameTracks      = map[string]map[string]map[string]*webrtc.TrackLocalStaticRTP{}
@@ -83,8 +83,12 @@ func main() {
 
 	tlsCert := "cert.pem"
 	tlsKey := "key.pem"
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
 
-	if err := app.ListenTLS(":8080", tlsCert, tlsKey); err != nil {
+	if err := app.ListenTLS("0.0.0.0:"+port, tlsCert, tlsKey); err != nil {
 		log.Errorf("Failed to start Fiber server: %v", err)
 	}
 }
