@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>WebRTC Audio Only</title>
+  </head>
+  <body>
+    <h3>Local Audio</h3>
+    <audio id="localAudio" autoplay muted controls></audio> <br />
+
+    <h3>Remote Audio</h3>
+    <div id="remoteAudios"></div> <br />
+
+    <h3>Logs</h3>
+    <div id="logs"></div>
+
+    <script>
+      navigator.mediaDevices.getUserMedia({ audio: true })
+      .then(stream => {
+        // Local audio
+        document.getElementById('localAudio').srcObject = stream;
+
+        let pc = new RTCPeerConnection();
+
+        // Add local audio tracks
+        stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+        // Handle remote audio tracks
+        pc.ontrack = function(event) {
+          if (event.track.kind !== 'audio') return;
+
+          let el = document.createElement('audio');
+          el.srcObject = event.streams[0];
+          el.autoplay = true;
+          el.controls = true;
+
+          document.getElementById('remoteAudios').appendChild(el);
+
+          // Remove element when track removed
+          event.streams[0].onremovetrack = ({track}) => {
+            if (el.parentNode) el.parentNode.removeChild(el);
+          };
+        };
+
+        // WebSocket connection
+        let ws = new WebSocket("{{.WebSocketURL}}");
+
+        pc.onicecandidate = e => {
+          if (!e.candidate) return;
+          ws.send(JSON.stringify({event: 'candidate', data: JSON.stringify(e.candidate)}));
+        };
+
+        ws.onclose = function(evt) {
+          window.alert("WebSocket has closed");
+        };
+
+        ws.onmessage = function(evt) {
+          let msg = JSON.parse(evt.data);
+          if (!msg) return console.log('failed to parse msg');
+
+          switch (msg.event) {
+            case 'offer':
+              let offer = JSON.parse(msg.data);
+              pc.setRemoteDescription(offer);
+              pc.createAnswer().then(answer => {
+                pc.setLocalDescription(answer);
+                ws.send(JSON.stringify({event: 'answer', data: JSON.stringify(answer)}));
+              });
+              break;
+
+            case 'candidate':
+              let candidate = JSON.parse(msg.data);
+              pc.addIceCandidate(candidate);
+              break;
+
+            default:
+              console.log('Unknown event:', msg.event);
+          }
+        };
+
+        ws.onerror = function(evt) {
+          console.log("WebSocket ERROR: " + evt.data);
+        };
+      })
+      .catch(err => window.alert("getUserMedia error: " + err));
+    </script>
+</body>
+</html>

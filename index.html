@@ -1,94 +1,88 @@
 <!DOCTYPE html>
 <html>
-<head>
-  <title>WebRTC Stream</title>
-</head>
-<body>
-  <h2>My Webcam</h2>
-  <video id="localVideo" autoplay muted playsinline></video>
+  <head>
+    <meta charset="utf-8">
+    <title>WebRTC Audio Only</title>
+  </head>
+  <body>
+    <h3>Local Audio</h3>
+    <audio id="localAudio" autoplay muted controls></audio> <br />
 
-  <h2>Remote Stream</h2>
-  <video id="remoteVideo" autoplay playsinline></video>
+    <h3>Remote Audio</h3>
+    <div id="remoteAudios"></div> <br />
 
-  <button onclick="makeCall()">Start Call</button>
+    <h3>Logs</h3>
+    <div id="logs"></div>
 
-  <script>
-const localVideo = document.getElementById('localVideo');
-const remoteVideo = document.getElementById('remoteVideo');
+    <script>
+      navigator.mediaDevices.getUserMedia({ audio: true })
+      .then(stream => {
+        // Local audio
+        document.getElementById('localAudio').srcObject = stream;
 
-const peer = new RTCPeerConnection({
-  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-});
+        let pc = new RTCPeerConnection();
 
-const ws = new WebSocket('ws://192.168.1.20:8080'); // Replace with your signaling server IP
+        // Add local audio tracks
+        stream.getTracks().forEach(track => pc.addTrack(track, stream));
 
-// Send ICE candidates to signaling server
-peer.onicecandidate = (event) => {
-  if (event.candidate) {
-    ws.send(JSON.stringify({ type: 'ice', candidate: event.candidate }));
-  }
-};
+        // Handle remote audio tracks
+        pc.ontrack = function(event) {
+          if (event.track.kind !== 'audio') return;
 
-// Set remote stream when received
-peer.ontrack = (event) => {
-  remoteVideo.srcObject = event.streams[0];
-};
+          let el = document.createElement('audio');
+          el.srcObject = event.streams[0];
+          el.autoplay = true;
+          el.controls = true;
 
-// Get user media and add tracks to peer connection
-navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-  .then(stream => {
-    localVideo.srcObject = stream;
-    stream.getTracks().forEach(track => peer.addTrack(track, stream));
-  })
-  .catch(error => console.error('Error accessing media devices.', error));
+          document.getElementById('remoteAudios').appendChild(el);
 
-// Handle incoming WebSocket messages with Blob/text handling
-ws.onmessage = async (event) => {
-  let dataString;
+          // Remove element when track removed
+          event.streams[0].onremovetrack = ({track}) => {
+            if (el.parentNode) el.parentNode.removeChild(el);
+          };
+        };
 
-  if (event.data instanceof Blob) {
-    dataString = await event.data.text();
-  } else {
-    dataString = event.data;
-  }
+        // WebSocket connection
+        let ws = new WebSocket("{{.}}");
 
-  const data = JSON.parse(dataString);
+        pc.onicecandidate = e => {
+          if (!e.candidate) return;
+          ws.send(JSON.stringify({event: 'candidate', data: JSON.stringify(e.candidate)}));
+        };
 
-  if (data.type === 'offer') {
-    await peer.setRemoteDescription(new RTCSessionDescription(data));
-    const answer = await peer.createAnswer();
-    await peer.setLocalDescription(answer);
-    ws.send(JSON.stringify(peer.localDescription));
-  }
+        ws.onclose = function(evt) {
+          window.alert("WebSocket has closed");
+        };
 
-  if (data.type === 'answer') {
-    await peer.setRemoteDescription(new RTCSessionDescription(data));
-  }
+        ws.onmessage = function(evt) {
+          let msg = JSON.parse(evt.data);
+          if (!msg) return console.log('failed to parse msg');
 
-  if (data.type === 'ice') {
-    try {
-      await peer.addIceCandidate(data.candidate);
-    } catch (e) {
-      console.error('Error adding received ice candidate', e);
-    }
-  }
-};
+          switch (msg.event) {
+            case 'offer':
+              let offer = JSON.parse(msg.data);
+              pc.setRemoteDescription(offer);
+              pc.createAnswer().then(answer => {
+                pc.setLocalDescription(answer);
+                ws.send(JSON.stringify({event: 'answer', data: JSON.stringify(answer)}));
+              });
+              break;
 
-// Create offer and send to signaling server (run on one peer)
-async function makeCall() {
-  const offer = await peer.createOffer();
-  await peer.setLocalDescription(offer);
-  ws.send(JSON.stringify(offer));
-}
+            case 'candidate':
+              let candidate = JSON.parse(msg.data);
+              pc.addIceCandidate(candidate);
+              break;
 
-// Auto-start call after WebSocket connection opens
-ws.onopen = () => {
-  console.log('✅ WebSocket connected');
-  console.log('📞 Making offer...');
-  makeCall();
-};
+            default:
+              console.log('Unknown event:', msg.event);
+          }
+        };
 
-
-  </script>
+        ws.onerror = function(evt) {
+          console.log("WebSocket ERROR: " + evt.data);
+        };
+      })
+      .catch(err => window.alert("getUserMedia error: " + err));
+    </script>
 </body>
 </html>

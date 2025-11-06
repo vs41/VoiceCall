@@ -1,138 +1,258 @@
-<!DOCTYPE html>
+<!-- <!DOCTYPE html>
 <html>
 <head>
-  <title>Team Chat (WebSocket)</title>
+  <title>Team Audio Chat (WebRTC)</title>
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      padding: 20px;
-      background: #f4f4f4;
-      max-width: 600px;
-      margin: auto;
-    }
-
-    #status {
-      color: green;
-      margin-bottom: 10px;
-    }
-
-    #messages {
-      background: white;
-      border: 1px solid #ccc;
-      padding: 10px;
-      height: 300px;
-      overflow-y: auto;
-      margin-bottom: 10px;
-    }
-
-    #inputArea {
-      display: flex;
-      gap: 10px;
-    }
-
-    #msgInput {
-      flex: 1;
-      padding: 10px;
-      font-size: 16px;
-    }
-
-    #sendBtn {
-      padding: 10px 20px;
-      font-size: 16px;
-      cursor: pointer;
-    }
-
-    .message {
-      margin: 5px 0;
-      word-wrap: break-word;
-    }
-
-    .message.you {
-      font-weight: bold;
-      color: blue;
-    }
-
-    .message.other {
-      font-weight: bold;
-      color: black;
-    }
-
-    .error {
-      color: red;
-    }
+    body { font-family: Arial; text-align: center; padding: 20px; }
+    #status { font-weight: bold; margin-bottom: 10px; color: green; }
+    audio { margin-top: 20px; width: 100%; }
+    #playBtn { margin-top: 20px; padding: 10px 20px; font-size: 16px; cursor: pointer; }
   </style>
 </head>
 <body>
-  <h2>💬 Team Chat</h2>
+  <h2>🎤 Team Audio Chat</h2>
   <div id="status">Connecting...</div>
-  <div id="messages"></div>
-
-  <div id="inputArea">
-    <input type="text" id="msgInput" placeholder="Type a message..." />
-    <button id="sendBtn">Send</button>
-  </div>
+  <audio id="remoteAudio" controls></audio>
+  <br />
+  <button id="playBtn" style="display:none;">Start Audio</button>
 
   <script>
-  const myId = `user-${Date.now()}`;
- // Unique ID per user
-    const socket = new WebSocket("ws://192.168.1.20:8022/ws"); // Replace with your server IP
-
+    const myId = `user-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const socket = new WebSocket("ws://192.168.1.20:8022/ws"); // Update IP if needed
     const statusDiv = document.getElementById("status");
-    const messagesDiv = document.getElementById("messages");
-    const msgInput = document.getElementById("msgInput");
-    const sendBtn = document.getElementById("sendBtn");
+    const remoteAudio = document.getElementById("remoteAudio");
+    const playBtn = document.getElementById("playBtn");
 
-    function appendMessage(text, senderId) {
-      const div = document.createElement("div");
-      div.className = "message " + (senderId === myId ? "you" : "other");
-      div.innerText = (senderId === myId ? "You: " : `${senderId.slice(0, 8)}: `) + text;
-      messagesDiv.appendChild(div);
-      messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    const peerConnection = new RTCPeerConnection({
+      iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+    });
+
+    let localStream;
+
+    async function initMedia() {
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        console.log("Local audio tracks:", localStream.getAudioTracks());
+        localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+        statusDiv.textContent = "🎙️ Microphone access granted.";
+      } catch (err) {
+        console.error("Mic access failed", err);
+        statusDiv.textContent = "❌ Cannot access microphone.";
+        statusDiv.style.color = "red";
+      }
     }
 
-    function sendMessage() {
-      const text = msgInput.value.trim();
-      if (text === "") return;
-      const msg = {
-        type: "chat",
-        userId: myId,
-        text: text
-      };
-      socket.send(JSON.stringify(msg));
-      appendMessage(text, myId);
-      msgInput.value = "";
-    }
-
-    socket.onopen = () => {
-      statusDiv.innerText = "✅ Connected to chat!";
+    peerConnection.onicecandidate = (event) => {
+      if (event.candidate) {
+        socket.send(JSON.stringify({
+          type: "ice",
+          candidate: event.candidate,
+          userId: myId,
+        }));
+      }
     };
 
-    socket.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        if (msg.type === "chat" && msg.text && msg.userId !== myId) {
-          appendMessage(msg.text, msg.userId);
-        }
-      } catch (err) {
-        console.error("Invalid message:", event.data);
+    peerConnection.ontrack = (event) => {
+      const stream = event.streams[0];
+      console.log("Received remote stream:", stream);
+      console.log("Audio tracks on remote stream:", stream.getAudioTracks());
+
+      if (stream) {
+        remoteAudio.srcObject = stream;
+        remoteAudio.volume = 1;
+        remoteAudio.muted = false;
+        statusDiv.textContent = "🔄 Remote stream received. Click 'Start Audio' to play.";
+        playBtn.style.display = 'inline-block'; // Show play button
+      }
+    };
+
+    playBtn.onclick = () => {
+      remoteAudio.play()
+        .then(() => {
+          playBtn.style.display = 'none';
+          statusDiv.textContent = "🔊 Audio playing";
+        })
+        .catch(e => {
+          console.warn("Audio play failed:", e);
+          statusDiv.textContent = "❌ Audio play failed — user interaction required.";
+          statusDiv.style.color = "red";
+        });
+    };
+
+    socket.onopen = async () => {
+      statusDiv.textContent = `✅ Connected as ${myId}`;
+      socket.send(JSON.stringify({ userId: myId })); // Send userId to register
+
+      await initMedia();
+
+      setTimeout(async () => {
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+        socket.send(JSON.stringify({
+          type: "offer",
+          offer: offer,
+          userId: myId
+        }));
+      }, 1000);
+    };
+
+    socket.onmessage = async (event) => {
+      const msg = JSON.parse(event.data);
+      if (msg.userId === myId) return;
+
+      switch (msg.type) {
+        case "offer":
+          await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.offer));
+          const answer = await peerConnection.createAnswer();
+          await peerConnection.setLocalDescription(answer);
+          socket.send(JSON.stringify({ type: "answer", answer: answer, userId: myId }));
+          break;
+
+        case "answer":
+          await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.answer));
+          break;
+
+        case "ice":
+          if (msg.candidate) {
+            try {
+              await peerConnection.addIceCandidate(new RTCIceCandidate(msg.candidate));
+            } catch (err) {
+              console.error("Error adding ICE candidate", err);
+            }
+          }
+          break;
       }
     };
 
     socket.onerror = (err) => {
-      statusDiv.innerText = "❌ WebSocket error!";
-      statusDiv.className = "error";
-      console.error("WebSocket error:", err);
+      console.error("WebSocket error", err);
+      statusDiv.textContent = "❌ WebSocket error";
+      statusDiv.style.color = "red";
     };
 
     socket.onclose = () => {
-      statusDiv.innerText = "❌ Disconnected from server.";
-      statusDiv.className = "error";
+      statusDiv.textContent = "❌ WebSocket disconnected";
+      statusDiv.style.color = "red";
     };
+  </script>
+</body>
+</html> -->
 
-    sendBtn.onclick = sendMessage;
-    msgInput.addEventListener("keyup", (e) => {
-      if (e.key === "Enter") sendMessage();
-    });
+
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Mesh WebRTC Video Chat</title>
+  <link rel="icon" href="data:,">
+  <style>
+    body { margin: 0; font-family: sans-serif; background: #111; color: white; }
+    .videos { display: flex; flex-wrap: wrap; justify-content: center; }
+    video { width: 300px; margin: 10px; background: black; border: 2px solid #333; }
+    .videoLabel { text-align: center; margin-top: -5px; font-size: 14px; }
+  </style>
+  <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script>
+</head>
+<body>
+  <div id="videos" class="videos">
+    <div id="localVideoContainer">
+      <video id="localVideo" autoplay muted></video>
+    </div>
+  </div>
+  <script>
+    const WS_PORT = 8443;
+    let localUuid = createUUID();
+    let localDisplayName = prompt("Enter your name:");
+    let localStream;
+    let serverConnection;
+    let peerConnections = {};
+    const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+    function createUUID() {
+      return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+        (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+      );
+    }
+
+    function start() {
+      navigator.mediaDevices.getUserMedia({ video: true, audio: false }).then(stream => {
+        localStream = stream;
+        document.getElementById('localVideo').srcObject = stream;
+        connectSocket();
+      });
+    }
+
+    function connectSocket() {
+      serverConnection = new WebSocket('wss://' + window.location.hostname + ':' + WS_PORT + '/ws');
+      serverConnection.onopen = () => {
+        serverConnection.send(JSON.stringify({ uuid: localUuid, displayName: localDisplayName, dest: 'all' }));
+      };
+
+      serverConnection.onmessage = msg => {
+        let signal = JSON.parse(msg.data);
+        if (signal.uuid === localUuid || (signal.dest !== 'all' && signal.dest !== localUuid)) return;
+
+        if (signal.displayName && signal.dest === 'all') {
+          setUpPeer(signal.uuid, signal.displayName);
+          serverConnection.send(JSON.stringify({ uuid: localUuid, displayName: localDisplayName, dest: signal.uuid }));
+        } else if (signal.displayName && signal.dest === localUuid) {
+          setUpPeer(signal.uuid, signal.displayName, true);
+        } else if (signal.sdp) {
+          peerConnections[signal.uuid].pc.setRemoteDescription(new RTCSessionDescription(signal.sdp)).then(() => {
+            if (signal.sdp.type === 'offer') {
+              peerConnections[signal.uuid].pc.createAnswer().then(desc => setLocalDesc(desc, signal.uuid));
+            }
+          });
+        } else if (signal.ice) {
+          peerConnections[signal.uuid].pc.addIceCandidate(new RTCIceCandidate(signal.ice));
+        }
+      };
+    }
+
+    function setUpPeer(uuid, name, initiate = false) {
+      let pc = new RTCPeerConnection(config);
+      peerConnections[uuid] = { pc: pc, name: name };
+
+      pc.onicecandidate = e => {
+        if (e.candidate) {
+          serverConnection.send(JSON.stringify({ ice: e.candidate, uuid: localUuid, dest: uuid }));
+        }
+      };
+
+      pc.ontrack = e => {
+        let video = document.createElement('video');
+        video.autoplay = true;
+        video.srcObject = e.streams[0];
+        let label = document.createElement('div');
+        label.className = 'videoLabel';
+        label.textContent = name;
+        let container = document.createElement('div');
+        container.appendChild(video);
+        container.appendChild(label);
+        container.id = "remote_" + uuid;
+        document.getElementById('videos').appendChild(container);
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        if (['disconnected', 'failed', 'closed'].includes(pc.iceConnectionState)) {
+          document.getElementById('remote_' + uuid)?.remove();
+          delete peerConnections[uuid];
+        }
+      };
+
+      localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+      if (initiate) {
+        pc.createOffer().then(desc => setLocalDesc(desc, uuid));
+      }
+    }
+
+    function setLocalDesc(desc, uuid) {
+      peerConnections[uuid].pc.setLocalDescription(desc).then(() => {
+        serverConnection.send(JSON.stringify({ sdp: desc, uuid: localUuid, dest: uuid }));
+      });
+    }
+
+    start();
   </script>
 </body>
 </html>
+
