@@ -85,7 +85,7 @@ func main() {
 	tlsKey := "key.pem"
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080"
+		port = "10000"
 	}
 
 	if err := app.ListenTLS("0.0.0.0:"+port, tlsCert, tlsKey); err != nil {
@@ -281,7 +281,13 @@ func websocketHandler(c *websocket.Conn) {
 		if i == nil {
 			return
 		}
-		candidateJSON, _ := json.Marshal(i.ToJSON())
+		candidateJSON, err := json.Marshal(i.ToJSON())
+		if err != nil {
+			tsWriter.WriteJSON(&websocketMessage{
+				Event: "Error in  the OnICECandidate",
+				Data:  string(candidateJSON),
+			})
+		}
 		tsWriter.WriteJSON(&websocketMessage{
 			Event: "candidate",
 			Data:  string(candidateJSON),
@@ -290,9 +296,22 @@ func websocketHandler(c *websocket.Conn) {
 
 	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
 		log.Infof("Connection state: %s", s)
-		if s == webrtc.PeerConnectionStateClosed || s == webrtc.PeerConnectionStateFailed {
+		// if s == webrtc.PeerConnectionStateClosed || s == webrtc.PeerConnectionStateFailed {
+		// 	signalPeerConnectionsForGameTeam(gameID, teamID)
+		// }
+
+		log.Infof("Connection state change: %s", pc)
+
+		switch s {
+		case webrtc.PeerConnectionStateFailed:
+			if err := pc.Close(); err != nil {
+				log.Errorf("Failed to close PeerConnection: %v", err)
+			}
+		case webrtc.PeerConnectionStateClosed:
 			signalPeerConnectionsForGameTeam(gameID, teamID)
+		default:
 		}
+
 	})
 
 	pc.OnTrack(func(t *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
