@@ -54,35 +54,20 @@ func main() {
 		return c.Send(buf.Bytes())
 	})
 
-	app.Use("/websocket", func(c *fiber.Ctx) error {
-		if websocket.IsWebSocketUpgrade(c) {
-			return c.Next()
-		}
-		return fiber.ErrUpgradeRequired
-	})
 
-	// WebSocket handler
-	app.Get("/websocket", websocket.New(sever.WebsocketHandler))
-
-	// Periodically request keyframes
-	go func() {
-		for range time.NewTicker(time.Second * 3).C {
-			sever.DispatchAllKeyFrames()
-		}
-	}()
 
 	// tlsCert := "cert.pem"
 	// tlsKey := "key.pem"
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080"
+		port = "8081"
 	}
 	// tlsCert := "/home/vishal_s/Documents/key/cert.pem"
 	// tlsKey := "/home/vishal_s/Documents/key/key.pem"
 	if err := app.ListenTLS(":"+port); err != nil {
 		log.Errorf("Failed to start Fiber server: %v", err)
 	}
-	// if err := app.ListenTLS(":"+port, tlsCert, tlsKey); err != nil {
+	// if err := app.Listen(":"+port, tlsCert, tlsKey); err != nil {
 	// 	log.Errorf("Failed to start Fiber server: %v", err)
 	// }
 }
